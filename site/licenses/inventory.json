@@ -1,0 +1,67 @@
+[
+  {
+    "package": "three",
+    "version": "0.187.0",
+    "license": "MIT",
+    "files": [
+      "three/LICENSE"
+    ]
+  },
+  {
+    "package": "react-dom",
+    "version": "19.3.1",
+    "license": "MIT",
+    "files": [
+      "react-dom/LICENSE"
+    ]
+  },
+  {
+    "package": "scheduler",
+    "version": "0.28.0",
+    "license": "MIT",
+    "files": [
+      "scheduler/LICENSE"
+    ]
+  },
+  {
+    "package": "react",
+    "version": "19.3.1",
+    "license": "MIT",
+    "files": [
+      "react/LICENSE"
+    ]
+  },
+  {
+    "package": "lucide-react",
+    "version": "1.69.0",
+    "license": "ISC",
+    "files": [
+      "lucide-react/LICENSE"
+    ]
+  },
+  {
+    "package": "echarts",
+    "version": "6.1.0",
+    "license": "Apache-2.0",
+    "files": [
+      "echarts/LICENSE",
+      "echarts/NOTICE"
+    ]
+  },
+  {
+    "package": "zrender",
+    "version": "6.1.0",
+    "license": "BSD-3-Clause",
+    "files": [
+      "zrender/LICENSE"
+    ]
+  },
+  {
+    "package": "tslib",
+    "version": "2.3.0",
+    "license": "0BSD",
+    "files": [
+      "tslib/LICENSE.txt"
+    ]
+  }
+]
