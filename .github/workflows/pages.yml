@@ -1,7 +1,8 @@
+# Source template for the legacy, explicitly selected local publication mode.
 name: Publish EagleEye snapshot
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
@@ -10,7 +11,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   deploy:
+    if: ${{ vars.EAGLEEYE_CLOUD_ENABLED != 'true' && github.repository == 'musiclord/EagleEye' && github.event.repository.private == false }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       pages: write
@@ -20,15 +23,28 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: Check exported snapshot
+      - name: Check exported snapshot and reject cloud-managed repository
+        shell: bash
         run: |
+          set -euo pipefail
+          test ! -d cloud-data
+          test ! -f .github/workflows/cloud-daily.yml
           test -f site/index.html
           test -f site/snapshot/manifest.json
           test -f site/.nojekyll
+      - name: Reject an obsolete deployment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: branch } = await github.rest.repos.getBranch({ ...context.repo, branch: 'main' });
+            if (branch.commit.sha !== context.sha) throw new Error('Remote main changed; do not deploy an obsolete snapshot');
       - uses: actions/configure-pages@v5
+        with:
+          enablement: false
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
+          retention-days: 1
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4

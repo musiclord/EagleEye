@@ -1,0 +1,188 @@
+# Inert source template. Only a reviewed release copies it to .github/workflows/.
+name: EagleEye daily collection and Pages
+on:
+  schedule:
+    # UTC: Taipei 07:17 and 09:47. The second run is a bounded follow-up.
+    - cron: '17 23 * * *'
+    - cron: '47 1 * * *'
+  workflow_dispatch:
+    inputs:
+      redeploy_existing:
+        description: 'Validate and redeploy the committed snapshot without collecting data'
+        required: false
+        default: false
+        type: boolean
+permissions:
+  contents: read
+concurrency:
+  group: pages
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONUTF8: '1'
+jobs:
+  preflight:
+    # Missing/false variable means no runner starts; private/fork repositories are excluded.
+    if: ${{ vars.EAGLEEYE_CLOUD_ENABLED == 'true' && github.repository == 'musiclord/EagleEye' && github.event.repository.private == false && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    outputs:
+      allowed: ${{ steps.check.outputs.allowed }}
+      base_sha: ${{ steps.check.outputs.base_sha }}
+    steps:
+      - name: Confirm public repository and opt-in using read-only API
+        id: check
+        uses: actions/github-script@v7
+        env:
+          CLOUD_ENABLED: ${{ vars.EAGLEEYE_CLOUD_ENABLED }}
+        with:
+          script: |
+            if (process.env.CLOUD_ENABLED !== 'true') throw new Error('Cloud collection is disabled');
+            const { data: repo } = await github.rest.repos.get(context.repo);
+            if (repo.full_name !== 'musiclord/EagleEye' || repo.private || repo.visibility !== 'public' || repo.archived || repo.default_branch !== 'main') {
+              throw new Error('Only the opted-in public main repository may run this workflow');
+            }
+            const { data: branch } = await github.rest.repos.getBranch({ ...context.repo, branch: repo.default_branch });
+            core.setOutput('base_sha', branch.commit.sha);
+            core.setOutput('allowed', 'true');
+  collect:
+    needs: preflight
+    if: ${{ needs.preflight.outputs.allowed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    outputs:
+      ready: ${{ steps.commit.outputs.changed == 'true' || inputs.redeploy_existing == true }}
+      commit_sha: ${{ steps.commit.outputs.commit_sha || needs.preflight.outputs.base_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.base_sha }}
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned collector dependencies
+        run: python -m pip install --disable-pip-version-check --no-cache-dir -r cloud-requirements.lock.txt
+      - name: Check canonical baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d cloud-data
+          test -f site/snapshot/manifest.json
+          test -z "$(git status --porcelain)"
+      - name: Collect bounded official observations
+        if: ${{ inputs.redeploy_existing != true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m backend.cloud_collect --history-dir cloud-data --scratch-dir "$RUNNER_TEMP/eagleeye-collect" --max-requests 24 --deadline-seconds 480 --report "$RUNNER_TEMP/eagleeye-collect-report.json"
+      - name: Read collection result
+        id: result
+        if: ${{ inputs.redeploy_existing != true }}
+        shell: python
+        run: |
+          import json, os
+          from pathlib import Path
+          report = json.loads((Path(os.environ['RUNNER_TEMP']) / 'eagleeye-collect-report.json').read_text(encoding='utf-8'))
+          if report['status'] not in {'completed', 'degraded'}:
+              raise SystemExit('Collection did not produce an acceptable canonical candidate')
+          if type(report['changed']) is not bool or type(report['observations_changed']) is not bool:
+              raise SystemExit('Invalid collector result')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
+              out.write('changed=' + str(report['changed']).lower() + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as out:
+              out.write('Collection: **' + report['status'] + '**. Observations changed: **' + str(report['observations_changed']).lower() + '**. Canonical state changed: **' + str(report['changed']).lower() + '**.\n')
+              out.write('Source failures retain their previous successful observation/retrieval dates. A successful workflow is not a claim that every source is current.\n')
+      - name: Build and validate snapshot from canonical history
+        if: ${{ steps.result.outputs.changed == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m backend.cloud_snapshot --history-dir cloud-data --assets-dir site --output-site "$RUNNER_TEMP/eagleeye-next-site" --scratch-dir "$RUNNER_TEMP/eagleeye-snapshot"
+      - name: Replace only the validated snapshot
+        if: ${{ steps.result.outputs.changed == 'true' }}
+        shell: python
+        run: |
+          import os, shutil
+          from pathlib import Path
+          root = Path.cwd().resolve()
+          target = (root / 'site' / 'snapshot').resolve()
+          candidate = Path(os.environ['RUNNER_TEMP']) / 'eagleeye-next-site' / 'snapshot'
+          if target != root / 'site' / 'snapshot' or not (candidate / 'manifest.json').is_file():
+              raise SystemExit('Unsafe snapshot target or incomplete candidate')
+          shutil.rmtree(target)
+          shutil.copytree(candidate, target)
+      - name: Validate the exact deploy payload
+        run: python scripts/verify_web_snapshot.py site
+      - name: Commit only validated public data and reject stale checkout
+        id: commit
+        if: ${{ steps.result.outputs.changed == 'true' }}
+        env:
+          BASE_SHA: ${{ needs.preflight.outputs.base_sha }}
+        shell: python
+        run: |
+          import os, subprocess
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True, encoding='utf-8').strip()
+          def assert_base():
+              remote = git('ls-remote', '--exit-code', 'origin', 'refs/heads/main').split()[0]
+              if remote != os.environ['BASE_SHA']:
+                  raise SystemExit('Remote main changed during collection; discard candidate and rerun from the new canonical history')
+          if git('rev-parse', 'HEAD') != os.environ['BASE_SHA']:
+              raise SystemExit('Checkout no longer matches the validated base')
+          paths = set()
+          for args in [('diff', '--name-only', '-z'), ('diff', '--cached', '--name-only', '-z'), ('ls-files', '--others', '--exclude-standard', '-z')]:
+              paths.update(p for p in git(*args).split('\0') if p)
+          if any(not (p.startswith('cloud-data/') or p.startswith('site/snapshot/')) for p in paths):
+              raise SystemExit('Unexpected changed path outside the public data allowlist')
+          assert_base()
+          subprocess.run(['git', 'add', '--', 'cloud-data', 'site/snapshot'], check=True)
+          if subprocess.run(['git', 'diff', '--cached', '--quiet']).returncode == 0:
+              with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
+                  out.write('changed=false\n')
+              raise SystemExit(0)
+          subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
+          subprocess.run(['git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
+          subprocess.run(['git', 'commit', '-m', 'Update validated EagleEye cloud observations'], check=True)
+          assert_base()
+          # A concurrent external push after assert_base is still rejected by normal fast-forward push.
+          subprocess.run(['git', 'push', 'origin', 'HEAD:refs/heads/main'], check=True)
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
+              out.write('changed=true\ncommit_sha=' + git('rev-parse', 'HEAD') + '\n')
+      - name: Upload validated site for this workflow
+        if: ${{ steps.commit.outputs.changed == 'true' || inputs.redeploy_existing == true }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+          retention-days: 1
+  deploy:
+    needs: [preflight, collect]
+    if: ${{ needs.collect.outputs.ready == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Reject an obsolete deployment
+        uses: actions/github-script@v7
+        env:
+          EXPECTED_SHA: ${{ needs.collect.outputs.commit_sha }}
+        with:
+          script: |
+            const { data: branch } = await github.rest.repos.getBranch({ ...context.repo, branch: 'main' });
+            if (branch.commit.sha !== process.env.EXPECTED_SHA) throw new Error('Remote main changed; do not deploy an obsolete snapshot');
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: false
+      - name: Deploy the artifact produced in this run
+        id: deployment
+        uses: actions/deploy-pages@v4
