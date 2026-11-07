@@ -14,9 +14,9 @@ EagleEye 是由瀏覽器讀取靜態快照、計算及繪圖的金融觀測網�
 
 ## 排程與免費使用條件
 
-此套件附帶尚待擁有者啟用的工作流程。預設 repo variable `EAGLEEYE_CLOUD_ENABLED` 未設或不等於字串 `true` 時，雲端取數與部署工作不執行。模板已存在不代表排程已啟用。
+擁有者已於 2026-11-08（台北時間）啟用此公開倉庫的每日工作流程，repo variable `EAGLEEYE_CLOUD_ENABLED=true`。目前狀態與每次結果可在 [Actions 執行紀錄](https://github.com/musiclord/EagleEye/actions/workflows/cloud-daily.yml) 查核。若此變數未設或不等於字串 `true`，雲端取數與部署工作不執行。
 
-預定每天台北時間 **07:17** 與 **09:47** 檢查（UTC 23:17與01:47），包含週末，以涵蓋可能隔日才更新的最新日端點。第二次是有界檢查，是否取數依各來源的間隔及狀態決定。GitHub排程可能延遲或漏跑，公開倉60日無活動也可能停用排程；不是準點保證。
+排程每天台北時間 **07:17** 與 **09:47** 檢查（UTC 23:17與01:47），包含週末，以涵蓋可能隔日才更新的最新日端點。第二次是有界檢查，是否取數依各來源的間隔及狀態決定。GitHub排程可能延遲或漏跑，公開倉60日無活動也可能停用排程；不是準點保證。
 
 僅針對公開 `musiclord/EagleEye` 倉庫的標準 Ubuntu runner 設計，未使用 larger runner、外部資料庫或長效個人token。公開倉的標準runner目前免費；Pages與artifact仍受服務上限約束。Pages artifact只保留1日，不把artifact/cache當永久資料台帳。[GitHub Actions費用條件](https://docs.github.com/en/billing/concepts/product-billing/github-actions)、[排程限制](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)、[Pages限制](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)。
 
@@ -33,3 +33,5 @@ EagleEye 是由瀏覽器讀取靜態快照、計算及繪圖的金融觀測網�
 Coin Metrics供給是代幣數，兩幣市值不代表全市場穩定幣或資金淨流入；BTC實現波動率不等於選擇權隱含波動率。來源出處、資料授權與改作說明列在網頁；資料授權與程式碼授權分開。
 
 精簡欄位及公式可用於重算；原始資料hash本身不能還原原文。這份公開台帳不是完整raw封存，也不是擷取開始以前的真實當時可得歷史。
+
+`cloud-package.json` 保存初次遷移套件的審核清單；每日更新後，最新資料與網站版本以 Git commit、`cloud-data/` 及 `site/snapshot/manifest.json` 為準，不把初次清單當成目前所有檔案的雜湊。
